@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lecture & Class Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #e5e7eb; }
+    header { padding: 16px 24px; background: #020617; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 20px; margin: 0; }
+    .btn {
+      background: #2563eb; color: #f9fafb; border: none; border-radius: 6px;
+      padding: 8px 14px; margin-left: 8px; cursor: pointer; font-size: 14px;
+    }
+    .btn.secondary { background: #111827; border: 1px solid #374151; }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .container { padding: 16px 24px; max-width: 1100px; margin: 0 auto; }
+
+    .card {
+      background: #020617; border-radius: 10px; border: 1px solid #1f2937;
+      padding: 16px 18px; margin-bottom: 16px;
+    }
+    .card-title { font-size: 16px; margin-bottom: 12px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    label { font-size: 13px; color: #9ca3af; display: block; margin-bottom: 4px; }
+    input, select, textarea {
+      width: 100%; padding: 7px 8px; border-radius: 6px;
+      border: 1px solid #374151; background: #020617; color: #e5e7eb;
+      font-size: 13px; box-sizing: border-box;
+    }
+    textarea { resize: vertical; min-height: 60px; }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px;
+    }
+    th, td {
+      padding: 8px 10px; border-bottom: 1px solid #1f2937; text-align: left;
+      white-space: nowrap;
+    }
+    th { color: #9ca3af; font-weight: 500; }
+    tr.upcoming { background: rgba(37, 99, 235, 0.06); }
+    tr:nth-child(even) { background-color: rgba(15, 23, 42, 0.6); }
+
+    .tag {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; background: #111827; border: 1px solid #1f2937;
+    }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Lecture & Class Tracker</h1>
+    <div>
+      <input id="csvInput" type="file" accept=".csv" class="hidden" />
+      <button class="btn secondary" onclick="triggerCsvImport()">Import CSV</button>
+      <button class="btn" onclick="toggleAddForm()">Add Class</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Add / Edit Class Form -->
+    <div id="addClassCard" class="card hidden">
+      <div class="card-title">Add / Edit Class</div>
+      <div class="form-grid">
+        <div>
+          <label for="dateInput">Date</label>
+          <input type="date" id="dateInput" />
+        </div>
+        <div>
+          <label for="timeInput">Time</label>
+          <input type="time" id="timeInput" />
+        </div>
+        <div>
+          <label for="batchInput">Batch / Comp. No.</label>
+          <input type="text" id="batchInput" placeholder="e.g. COMP 1.2 / III MBBS A" />
+        </div>
+        <div>
+          <label for="tlMethodInput">T-L Method</label>
+          <select id="tlMethodInput">
+            <option value="">Select</option>
+            <option value="Lecture">Lecture</option>
+            <option value="Small group">Small group</option>
+            <option value="Seminar">Seminar</option>
+            <option value="Bedside">Bedside</option>
+            <option value="Demo">Demo</option>
+            <option value="Others">Others</option>
+          </select>
+        </div>
+        <div>
+          <label for="topicInput">Topic</label>
+          <input type="text" id="topicInput" placeholder="Topic" />
+        </div>
+        <div>
+          <label for="facultyInput">Faculty</label>
+          <input type="text" id="facultyInput" placeholder="Faculty name" />
+        </div>
+        <div>
+          <label for="sloInput">SLO / Notes</label>
+          <textarea id="sloInput" placeholder="Specific learning objective or notes"></textarea>
+        </div>
+      </div>
+      <div style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
+        <button class="btn secondary" onclick="cancelAdd()">Cancel</button>
+        <button class="btn" onclick="saveClass()">Save Class</button>
+      </div>
+    </div>
+
+    <!-- Upcoming Classes Table -->
+    <div class="card">
+      <div class="card-title">
+        Upcoming Classes
+        <span id="upcomingCount" class="tag">0</span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Batch</th>
+              <th>T-L Method</th>
+              <th>Topic</th>
+              <th>Faculty</th>
+              <th>SLO</th>
+            </tr>
+          </thead>
+          <tbody id="upcomingTableBody">
+            <!-- rows injected by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'lectures_v1';
+
+    function loadLectures() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        console.error('Failed to parse lectures:', e);
+        return [];
+      }
+    }
+
+    function saveLectures(lectures) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lectures));
+    }
+
+    function toDateTimeNumber(lecture) {
+      // Combine date + time into sortable number like 20260103_0930
+      if (!lecture.date) return 0;
+      const d = lecture.date.replace(/-/g, '');
+      const t = (lecture.time || '00:00').replace(':', '');
+      return Number(d + t);
+    }
+
+    function getUpcomingLectures() {
+      const now = new Date();
+      const nowNum = Number(
+        now.toISOString().slice(0, 10).replace(/-/g, '') +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0')
+      );
+      const lectures = loadLectures();
+      return lectures
+        .filter(l => toDateTimeNumber(l) >= nowNum)
+        .sort((a, b) => toDateTimeNumber(a) - toDateTimeNumber(b));
+    }
+
+    function renderUpcoming() {
+      const tbody = document.getElementById('upcomingTableBody');
+      const countSpan = document.getElementById('upcomingCount');
+      tbody.innerHTML = '';
+      const upcoming = getUpcomingLectures();
+      countSpan.textContent = upcoming.length;
+
+      upcoming.forEach(lec => {
+        const tr = document.createElement('tr');
+        tr.classList.add('upcoming');
+        tr.innerHTML = `
+          <td>${lec.date || ''}</td>
+          <td>${lec.time || ''}</td>
+          <td>${lec.batch || ''}</td>
+          <td>${lec.tlMethod || ''}</td>
+          <td>${lec.topic || ''}</td>
+          <td>${lec.faculty || ''}</td>
+          <td>${lec.slo || ''}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function toggleAddForm() {
+      const card = document.getElementById('addClassCard');
+      card.classList.toggle('hidden');
+    }
+
+    function cancelAdd() {
+      clearForm();
+      document.getElementById('addClassCard').classList.add('hidden');
+    }
+
+    function clearForm() {
+      document.getElementById('dateInput').value = '';
+      document.getElementById('timeInput').value = '';
+      document.getElementById('batchInput').value = '';
+      document.getElementById('tlMethodInput').value = '';
+      document.getElementById('topicInput').value = '';
+      document.getElementById('facultyInput').value = '';
+      document.getElementById('sloInput').value = '';
+    }
+
+    function saveClass() {
+      const date = document.getElementById('dateInput').value;
+      const time = document.getElementById('timeInput').value;
+      const batch = document.getElementById('batchInput').value.trim();
+      const tlMethod = document.getElementById('tlMethodInput').value;
+      const topic = document.getElementById('topicInput').value.trim();
+      const faculty = document.getElementById('facultyInput').value.trim();
+      const slo = document.getElementById('sloInput').value.trim();
+
+      if (!date || !time || !topic) {
+        alert('Please enter at least date, time and topic.');
+        return;
+      }
+
+      const lectures = loadLectures();
+      lectures.push({ date, time, batch, tlMethod, topic, faculty, slo });
+      saveLectures(lectures);
+      clearForm();
+      document.getElementById('addClassCard').classList.add('hidden');
+      renderUpcoming();
+    }
+
+    function triggerCsvImport() {
+      const input = document.getElementById('csvInput');
+      input.value = '';
+      input.onchange = handleCsvFile;
+      input.click();
+    }
+
+    function handleCsvFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const text = evt.target.result;
+        importFromCsvText(text);
+      };
+      reader.readAsText(file);
+    }
+
+    // Very simple CSV parser assuming commas and no complex quoting
+    function importFromCsvText(csvText) {
+      const lines = csvText.split(/\r?\n/).filter(line => line.trim().length > 0);
+      if (lines.length <= 1) {
+        alert('CSV appears to be empty.');
+        return;
+      }
+
+      const header = lines[0].split(',').map(h => h.trim().toUpperCase());
+
+      const idx = {
+        sno: header.indexOf('S.NO'),
+        date: header.indexOf('DATE'),
+        time: header.indexOf('TIME'),
+        compNo: header.indexOf('COMP.NO'),
+        topic: header.indexOf('TOPIC'),
+        tlMethod: header.indexOf('T-L METHOD'),
+        slo: header.indexOf('SLO'),
+        faculty: header.indexOf('FACULTY')
+      };
+
+      const lectures = loadLectures();
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        if (cols.length === 1 && !cols[0].trim()) continue;
+
+        const get = (idx) => idx >= 0 && idx < cols.length ? cols[idx].trim() : '';
+
+        const rawDate = get(idx.date);
+        const rawTime = get(idx.time);
+
+        const date = normaliseDate(rawDate);
+        const time = normaliseTime(rawTime);
+
+        const batch = get(idx.compNo);
+        const topic = get(idx.topic);
+        const tlMethod = get(idx.tlMethod);
+        const slo = get(idx.slo);
+        const faculty = get(idx.faculty);
+
+        if (!date || !topic) continue; // skip broken rows
+
+        lectures.push({ date, time, batch, tlMethod, topic, faculty, slo });
+      }
+
+      saveLectures(lectures);
+      renderUpcoming();
+      alert('CSV import completed.');
+    }
+
+    function normaliseDate(value) {
+      if (!value) return '';
+      // handle common formats: DD/MM/YYYY or YYYY-MM-DD
+      if (value.includes('/')) {
+        const [d, m, y] = value.split(/[\/]/).map(x => x.trim());
+        if (y && m && d) {
+          return `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+      }
+      // if already yyyy-mm-dd
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return value.trim();
+      return value.trim();
+    }
+
+    function normaliseTime(value) {
+      if (!value) return '';
+      const v = value.trim();
+      // HH:MM (24h)
+      if (/^\d{2}:\d{2}$/.test(v)) return v;
+      // H:MM
+      if (/^\d:\d{2}$/.test(v)) return '0' + v;
+      // HHMM
+      if (/^\d{3,4}$/.test(v)) {
+        const s = v.padStart(4, '0');
+        return s.slice(0, 2) + ':' + s.slice(2);
+      }
+      return v;
+    }
+
+    // initial render
+    renderUpcoming();
+  </script>
+</body>
+</html>
